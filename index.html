@@ -1,0 +1,88 @@
+﻿<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Roulette Auth — Twitch Token</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    body { background-color: #0f0f13; color: #f3f4f6; font-family: sans-serif; }
+  </style>
+</head>
+<body class="flex items-center justify-center min-h-screen p-4">
+
+  <div class="bg-gray-900 border border-purple-900/40 rounded-2xl p-6 max-w-md w-full shadow-2xl">
+    <div class="text-center mb-6">
+      <h1 class="text-2xl font-bold text-purple-400 mb-1">Twitch Authorization</h1>
+      <p class="text-xs text-gray-400">Авторизация для локальной рулетки</p>
+    </div>
+
+    <!-- Step 1: Login Button -->
+    <div id="auth-section" class="space-y-4">
+      <div>
+        <label class="block text-xs text-gray-400 mb-1">Client ID приложения</label>
+        <input type="text" id="client-id-input" placeholder="Введи Client ID из Twitch Console" 
+               class="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-purple-500">
+      </div>
+
+      <button onclick="startAuth()" 
+              class="w-full bg-purple-600 hover:bg-purple-700 font-semibold py-2.5 rounded-lg transition text-sm">
+        Войти через Twitch
+      </button>
+    </div>
+
+    <!-- Step 2: Token Display -->
+    <div id="token-section" class="hidden space-y-4">
+      <div class="p-3 bg-emerald-950/40 border border-emerald-800/50 rounded-lg text-emerald-400 text-xs text-center font-medium">
+        Авторизация прошла успешно!
+      </div>
+      <div>
+        <label class="block text-xs text-gray-400 mb-1">Твой Access Token</label>
+        <input type="text" id="token-input" readonly 
+               class="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm font-mono focus:outline-none">
+      </div>
+      <button onclick="copyToken()" 
+              class="w-full bg-gray-800 hover:bg-gray-700 border border-gray-700 font-semibold py-2 rounded-lg transition text-sm">
+        Скопировать токен
+      </button>
+    </div>
+  </div>
+
+  <script>
+    const REDIRECT_URI = window.location.origin + window.location.pathname;
+    const SCOPES = 'channel:read:redemptions';
+
+    function startAuth() {
+      const clientId = document.getElementById('client-id-input').value.trim();
+      if (!clientId) {
+        alert('Пожалуйста, введи Client ID!');
+        return;
+      }
+      localStorage.setItem('vts_client_id', clientId);
+      const authUrl = `https://id.twitch.tv/oauth2/authorize?client_id=${clientId}&redirect_uri=${encodeURIComponent(REDIRECT_URI)}&scope=${encodeURIComponent(SCOPES)}&response_type=token`;
+      window.location.href = authUrl;
+    }
+
+    // Parse token from hash
+    const hashParams = new URLSearchParams(window.location.hash.substring(1));
+    const token = hashParams.get('access_token');
+
+    if (token) {
+      document.getElementById('auth-section').classList.add('hidden');
+      document.getElementById('token-section').classList.remove('hidden');
+      document.getElementById('token-input').value = token;
+    } else {
+      const savedId = localStorage.getItem('vts_client_id');
+      if (savedId) document.getElementById('client-id-input').value = savedId;
+    }
+
+    function copyToken() {
+      const tokenInput = document.getElementById('token-input');
+      tokenInput.select();
+      navigator.clipboard.writeText(tokenInput.value);
+      alert('Токен скопирован!');
+    }
+  </script>
+</body>
+</html>
+
