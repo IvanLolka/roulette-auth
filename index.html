@@ -17,15 +17,15 @@
       <p class="text-xs text-gray-400">Авторизация для локальной рулетки</p>
     </div>
 
-    <!-- Step 1: Login Button (Client ID вшит в код) -->
+    <!-- Step 1: Login Button -->
     <div id="auth-section" class="space-y-4">
-      <p class="text-xs text-gray-400 text-center">Нажми кнопку чтобы войти через Twitch. Client ID уже вшит в приложение.</p>
-
-      <button onclick="startAuth()" 
+      <p class="text-xs text-gray-400 text-center">Нажми кнопку чтобы войти через Twitch.</p>
+      <button id="auth-button" onclick="startAuth()" 
               class="w-full bg-purple-600 hover:bg-purple-700 font-semibold py-2.5 rounded-lg transition text-sm">
         Войти через Twitch
       </button>
-      <p id="auto-hint" class="hidden text-xs text-purple-300 text-center">Обнаружен автоматический режим — перенаправление...</p>
+      <p id="error-hint" class="hidden text-xs text-red-400 text-center"></p>
+      <p id="auto-hint" class="hidden text-xs text-purple-300 text-center">Перенаправление на Twitch...</p>
     </div>
 
     <!-- Step 2: Token Display (fallback manual) -->
@@ -63,19 +63,57 @@
 
   <script>
     const HARDCODED_CLIENT_ID = "dt57luvie92hosapsjvyqj1qtaeugg";
+    // Универсальный redirect URI — берем текущий origin + pathname, 
+    // чтобы точно совпадал и с GitHub Pages (https://ivanlolka.github.io/roulette-auth/), 
+    // и с localhost-разработки (http://localhost:1420/roulette-auth/)
     const REDIRECT_URI = window.location.origin + window.location.pathname;
     const SCOPES = 'channel:read:redemptions';
     const urlParams = new URLSearchParams(window.location.search);
     const port = urlParams.get('port') || '1421';
-    // client_id из query игнорируется — используем вшитый, но оставляем для совместимости
-    const clientIdFromQuery = urlParams.get('client_id') || HARDCODED_CLIENT_ID;
+
+    console.log("Roulette Auth loaded", { clientId: HARDCODED_CLIENT_ID, redirectUri: REDIRECT_URI, port });
 
     function startAuth() {
-      const clientId = HARDCODED_CLIENT_ID;
-      localStorage.setItem('vts_client_id', clientId);
-      if (port) localStorage.setItem('auth_port', port);
-      const authUrl = `https://id.twitch.tv/oauth2/authorize?client_id=${clientId}&redirect_uri=${encodeURIComponent(REDIRECT_URI)}&response_type=token&scope=${encodeURIComponent(SCOPES)}`;
-      window.location.href = authUrl;
+      try {
+        const clientId = HARDCODED_CLIENT_ID;
+        if (!clientId || clientId.length < 10) {
+          throw new Error("Client ID не настроен в коде");
+        }
+        localStorage.setItem('vts_client_id', clientId);
+        if (port) localStorage.setItem('auth_port', port);
+        
+        console.log("Constructing auth URL", { clientId, redirectUri: REDIRECT_URI, scopes: SCOPES });
+        
+        const authUrl = `https://id.twitch.tv/oauth2/authorize?client_id=${encodeURIComponent(clientId)}&redirect_uri=${encodeURIComponent(REDIRECT_URI)}&response_type=token&scope=${encodeURIComponent(SCOPES)}`;
+        console.log("Redirecting to Twitch auth URL:", authUrl);
+        
+        // Показываем индикатор перенаправления
+        const autoHint = document.getElementById('auto-hint');
+        if (autoHint) {
+          autoHint.classList.remove('hidden');
+          autoHint.textContent = 'Перенаправление на Twitch...';
+        }
+        
+        // Сначала пробуем window.location.href (наиболее надежно)
+        window.location.href = authUrl;
+        
+        // Фолбек: еслиhref не сработал за 500мс, пробуем window.open
+        setTimeout(() => {
+          if (window.location.href.indexOf("id.twitch.tv") === -1 && !window.location.href.includes("error")) {
+            console.warn("window.location.href не сработал, пробуем window.open");
+            const authUrl = `https://id.twitch.tv/oauth2/authorize?client_id=${encodeURIComponent(HARDCODED_CLIENT_ID)}&redirect_uri=${encodeURIComponent(REDIRECT_URI)}&response_type=token&scope=${encodeURIComponent(SCOPES)}`;
+            window.open(authUrl, "_self");
+          }
+        }, 500);
+      } catch (e) {
+        console.error("startAuth failed", e);
+        const errEl = document.getElementById('error-hint');
+        if (errEl) {
+          errEl.textContent = "Ошибка: " + e.message;
+          errEl.classList.remove('hidden');
+        }
+        alert("Ошибка авторизации: " + e.message);
+      }
     }
 
     function showManualToken(token) {
@@ -96,19 +134,28 @@
     const hashParams = new URLSearchParams(window.location.hash.substring(1));
     const token = hashParams.get('access_token');
 
+    console.log("Hash parsed", { tokenExists: !!token, hash: window.location.hash.substring(1).substring(0, 100) });
+
     if (token) {
       // Есть токен — пробуем отправить на локальный сервер
       document.getElementById('auth-section').classList.add('hidden');
       document.getElementById('sending-section').classList.remove('hidden');
       
       const fetchUrl = `http://127.0.0.1:${port}/auth?access_token=${encodeURIComponent(token)}`;
-      fetch(fetchUrl)
-        .then(res => res.json())
+      console.log("Sending token to local server:", fetchUrl);
+      
+      fetch(fetchUrl, { method: 'GET', mode: 'cors', credentials: 'include' })
+        .then(res => {
+          console.log("Local server response status:", res.status);
+          return res.json();
+        })
         .then(data => {
-          if (data.status === 'ok') {
+          console.log("Local server response data:", data);
+          if (data && data.status === 'ok') {
             showAutoSuccess();
           } else {
-            console.warn('Local server returned error', data);
+            console.warn('Local server returned error or unexpected data', data);
+            // Показываем токен вручную, если сервер вернул ошибку
             showManualToken(token);
           }
         })
@@ -118,16 +165,16 @@
           showManualToken(token);
         });
     } else {
-      // Нет токена — если пришел из приложения (есть port), авто-старт
-      if (urlParams.has('port') || clientIdFromQuery) {
+      // Нет токена — проверяем, пришли ли мы из приложения (есть port в query)
+      if (urlParams.has('port')) {
         const hint = document.getElementById('auto-hint');
         if (hint) {
           hint.classList.remove('hidden');
-          hint.textContent = 'Клиент ID вшит — перенаправление на Twitch...';
+          hint.textContent = 'Отправлено на Twitch — подтверди доступ в браузере, затем вернешься сюда автоматически';
         }
-        setTimeout(() => {
-          startAuth();
-        }, 800);
+        // Автоматический старт убран — пользователь должен нажать кнопку,
+        // иначе Twitch блокирует redirect в фоне
+        console.log("Port param present, showing hint, waiting for user click");
       }
     }
 
@@ -136,6 +183,13 @@
       tokenInput.select();
       navigator.clipboard.writeText(tokenInput.value);
       alert('Токен скопирован!');
+    }
+
+    // Автозапуск при входе, если есть port param (пришел из Tauri приложения)
+    // Пользователь все еще должен нажать кнопку, но мы можем подсветить подсказку
+    if (urlParams.has('port')) {
+      // Не авто-кликаем — это может вызвать блокировку
+      // Просто показываем подсказку
     }
   </script>
 </body>
