@@ -17,21 +17,18 @@
       <p class="text-xs text-gray-400">Авторизация для локальной рулетки</p>
     </div>
 
-    <!-- Step 1: Login Button -->
+    <!-- Step 1: Login Button (Client ID вшит в код) -->
     <div id="auth-section" class="space-y-4">
-      <div>
-        <label class="block text-xs text-gray-400 mb-1">Client ID приложения</label>
-        <input type="text" id="client-id-input" placeholder="Введи Client ID из Twitch Console" 
-               class="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-purple-500">
-      </div>
+      <p class="text-xs text-gray-400 text-center">Нажми кнопку чтобы войти через Twitch. Client ID уже вшит в приложение.</p>
 
       <button onclick="startAuth()" 
               class="w-full bg-purple-600 hover:bg-purple-700 font-semibold py-2.5 rounded-lg transition text-sm">
         Войти через Twitch
       </button>
+      <p id="auto-hint" class="hidden text-xs text-purple-300 text-center">Обнаружен автоматический режим — перенаправление...</p>
     </div>
 
-    <!-- Step 2: Token Display -->
+    <!-- Step 2: Token Display (fallback manual) -->
     <div id="token-section" class="hidden space-y-4">
       <div class="p-3 bg-emerald-950/40 border border-emerald-800/50 rounded-lg text-emerald-400 text-xs text-center font-medium">
         Авторизация прошла успешно!
@@ -45,22 +42,54 @@
               class="w-full bg-gray-800 hover:bg-gray-700 border border-gray-700 font-semibold py-2 rounded-lg transition text-sm">
         Скопировать токен
       </button>
+      <p class="text-xs text-gray-500 text-center">Если приложение StreamSpin запущено, токен уже отправлен автоматически.</p>
+    </div>
+
+    <!-- Step 3: Auto Success (when fetch to 127.0.0.1 succeeds) -->
+    <div id="auto-success" class="hidden space-y-4">
+      <div class="p-4 bg-emerald-950/40 border border-emerald-800/50 rounded-lg text-emerald-400 text-sm text-center font-medium">
+        ✅ Авторизация прошла успешно! Приложение StreamSpin подключено. Эту вкладку можно закрыть.
+      </div>
+      <div class="text-xs text-gray-400 text-center">Токен автоматически передан в приложение через локальный сервер.</div>
+    </div>
+
+    <!-- Loading state while sending to local server -->
+    <div id="sending-section" class="hidden space-y-4">
+      <div class="p-3 bg-purple-950/40 border border-purple-800/50 rounded-lg text-purple-300 text-xs text-center">
+        Отправка токена в приложение...
+      </div>
     </div>
   </div>
 
   <script>
+    const HARDCODED_CLIENT_ID = "dt57luvie92hosapsjvyqj1qtaeugg";
     const REDIRECT_URI = window.location.origin + window.location.pathname;
     const SCOPES = 'channel:read:redemptions';
+    const urlParams = new URLSearchParams(window.location.search);
+    const port = urlParams.get('port') || '1421';
+    // client_id из query игнорируется — используем вшитый, но оставляем для совместимости
+    const clientIdFromQuery = urlParams.get('client_id') || HARDCODED_CLIENT_ID;
 
     function startAuth() {
-      const clientId = document.getElementById('client-id-input').value.trim();
-      if (!clientId) {
-        alert('Пожалуйста, введи Client ID!');
-        return;
-      }
+      const clientId = HARDCODED_CLIENT_ID;
       localStorage.setItem('vts_client_id', clientId);
-      const authUrl = `https://id.twitch.tv/oauth2/authorize?client_id=${clientId}&redirect_uri=${encodeURIComponent(REDIRECT_URI)}&scope=${encodeURIComponent(SCOPES)}&response_type=token`;
+      if (port) localStorage.setItem('auth_port', port);
+      const authUrl = `https://id.twitch.tv/oauth2/authorize?client_id=${clientId}&redirect_uri=${encodeURIComponent(REDIRECT_URI)}&response_type=token&scope=${encodeURIComponent(SCOPES)}`;
       window.location.href = authUrl;
+    }
+
+    function showManualToken(token) {
+      document.getElementById('auth-section').classList.add('hidden');
+      document.getElementById('sending-section').classList.add('hidden');
+      document.getElementById('token-section').classList.remove('hidden');
+      document.getElementById('token-input').value = token;
+    }
+
+    function showAutoSuccess() {
+      document.getElementById('auth-section').classList.add('hidden');
+      document.getElementById('token-section').classList.add('hidden');
+      document.getElementById('sending-section').classList.add('hidden');
+      document.getElementById('auto-success').classList.remove('hidden');
     }
 
     // Parse token from hash
@@ -68,12 +97,38 @@
     const token = hashParams.get('access_token');
 
     if (token) {
+      // Есть токен — пробуем отправить на локальный сервер
       document.getElementById('auth-section').classList.add('hidden');
-      document.getElementById('token-section').classList.remove('hidden');
-      document.getElementById('token-input').value = token;
+      document.getElementById('sending-section').classList.remove('hidden');
+      
+      const fetchUrl = `http://127.0.0.1:${port}/auth?access_token=${encodeURIComponent(token)}`;
+      fetch(fetchUrl)
+        .then(res => res.json())
+        .then(data => {
+          if (data.status === 'ok') {
+            showAutoSuccess();
+          } else {
+            console.warn('Local server returned error', data);
+            showManualToken(token);
+          }
+        })
+        .catch(err => {
+          console.warn('Не удалось связаться с локальным сервером', err);
+          // Fallback: показываем токен для ручного копирования
+          showManualToken(token);
+        });
     } else {
-      const savedId = localStorage.getItem('vts_client_id');
-      if (savedId) document.getElementById('client-id-input').value = savedId;
+      // Нет токена — если пришел из приложения (есть port), авто-старт
+      if (urlParams.has('port') || clientIdFromQuery) {
+        const hint = document.getElementById('auto-hint');
+        if (hint) {
+          hint.classList.remove('hidden');
+          hint.textContent = 'Клиент ID вшит — перенаправление на Twitch...';
+        }
+        setTimeout(() => {
+          startAuth();
+        }, 800);
+      }
     }
 
     function copyToken() {
@@ -85,4 +140,3 @@
   </script>
 </body>
 </html>
-
