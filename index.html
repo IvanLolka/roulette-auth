@@ -3,193 +3,79 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Roulette Auth — Twitch Token</title>
+  <title>StreamSpin Auth</title>
   <script src="https://cdn.tailwindcss.com"></script>
   <style>
-    body { background-color: #0f0f13; color: #f3f4f6; font-family: sans-serif; }
+    body { background-color: #0f0f13; color: #f3f4f6; font-family: system-ui, sans-serif; }
   </style>
 </head>
 <body class="flex items-center justify-center min-h-screen p-4">
 
-  <div class="bg-gray-900 border border-purple-900/40 rounded-2xl p-6 max-w-md w-full shadow-2xl">
-    <div class="text-center mb-6">
-      <h1 class="text-2xl font-bold text-purple-400 mb-1">Twitch Authorization</h1>
-      <p class="text-xs text-gray-400">Авторизация для локальной рулетки</p>
+  <div class="bg-gray-900 border border-purple-900/40 rounded-2xl p-6 max-w-md w-full text-center shadow-2xl">
+    <div class="mb-4">
+      <h1 class="text-xl font-bold text-purple-400 mb-1">StreamSpin Auth</h1>
+      <p id="status-text" class="text-sm text-gray-300">Инициализация авторизации...</p>
     </div>
 
-    <!-- Step 1: Login Button -->
-    <div id="auth-section" class="space-y-4">
-      <p class="text-xs text-gray-400 text-center">Нажми кнопку чтобы войти через Twitch.</p>
-      <button id="auth-button" onclick="startAuth()" 
-              class="w-full bg-purple-600 hover:bg-purple-700 font-semibold py-2.5 rounded-lg transition text-sm">
-        Войти через Twitch
-      </button>
-      <p id="error-hint" class="hidden text-xs text-red-400 text-center"></p>
-      <p id="auto-hint" class="hidden text-xs text-purple-300 text-center">Перенаправление на Twitch...</p>
-    </div>
-
-    <!-- Step 2: Token Display (fallback manual) -->
-    <div id="token-section" class="hidden space-y-4">
-      <div class="p-3 bg-emerald-950/40 border border-emerald-800/50 rounded-lg text-emerald-400 text-xs text-center font-medium">
-        Авторизация прошла успешно!
-      </div>
-      <div>
-        <label class="block text-xs text-gray-400 mb-1">Твой Access Token</label>
-        <input type="text" id="token-input" readonly 
-               class="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm font-mono focus:outline-none">
-      </div>
-      <button onclick="copyToken()" 
-              class="w-full bg-gray-800 hover:bg-gray-700 border border-gray-700 font-semibold py-2 rounded-lg transition text-sm">
+    <!-- Fallback container if local server is unreachable -->
+    <div id="fallback-ui" class="hidden space-y-3 mt-4 text-left">
+      <p class="text-xs text-amber-400">Приложение StreamSpin не ответило на локальном порту. Скопируй токен вручную:</p>
+      <input type="text" id="token-input" readonly onclick="this.select()" 
+             class="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-xs font-mono text-gray-200">
+      <button onclick="copyToken()" class="w-full bg-purple-600 hover:bg-purple-700 text-xs font-semibold py-2 rounded-lg transition">
         Скопировать токен
       </button>
-      <p class="text-xs text-gray-500 text-center">Если приложение StreamSpin запущено, токен уже отправлен автоматически.</p>
-    </div>
-
-    <!-- Step 3: Auto Success (when fetch to 127.0.0.1 succeeds) -->
-    <div id="auto-success" class="hidden space-y-4">
-      <div class="p-4 bg-emerald-950/40 border border-emerald-800/50 rounded-lg text-emerald-400 text-sm text-center font-medium">
-        ✅ Авторизация прошла успешно! Приложение StreamSpin подключено. Эту вкладку можно закрыть.
-      </div>
-      <div class="text-xs text-gray-400 text-center">Токен автоматически передан в приложение через локальный сервер.</div>
-    </div>
-
-    <!-- Loading state while sending to local server -->
-    <div id="sending-section" class="hidden space-y-4">
-      <div class="p-3 bg-purple-950/40 border border-purple-800/50 rounded-lg text-purple-300 text-xs text-center">
-        Отправка токена в приложение...
-      </div>
     </div>
   </div>
 
   <script>
-    const HARDCODED_CLIENT_ID = "dt57luvie92hosapsjvyqj1qtaeugg";
-    // Универсальный redirect URI — берем текущий origin + pathname, 
-    // чтобы точно совпадал и с GitHub Pages (https://ivanlolka.github.io/roulette-auth/), 
-    // и с localhost-разработки (http://localhost:1420/roulette-auth/)
-    const REDIRECT_URI = window.location.origin + window.location.pathname;
-    const SCOPES = 'channel:read:redemptions';
+    const CLIENT_ID = "dt57luvie92hosapsjvyqj1qtaeugg";
+    const REDIRECT_URI = "https://ivanlolka.github.io/roulette-auth/";
+    const SCOPES = "channel:read:redemptions";
+
+    const statusEl = document.getElementById('status-text');
+    const fallbackEl = document.getElementById('fallback-ui');
+
+    // Parse params & hash
     const urlParams = new URLSearchParams(window.location.search);
+    const hashParams = new URLSearchParams(window.location.hash.substring(1));
+    const token = hashParams.get('access_token');
     const port = urlParams.get('port') || '1421';
 
-    console.log("Roulette Auth loaded", { clientId: HARDCODED_CLIENT_ID, redirectUri: REDIRECT_URI, port });
+    if (token) {
+      // Step 2: Token returned -> send immediately to local Rust server
+      statusEl.textContent = "Передаём токен в StreamSpin...";
 
-    function startAuth() {
-      try {
-        const clientId = HARDCODED_CLIENT_ID;
-        if (!clientId || clientId.length < 10) {
-          throw new Error("Client ID не настроен в коде");
-        }
-        localStorage.setItem('vts_client_id', clientId);
-        if (port) localStorage.setItem('auth_port', port);
-        
-        console.log("Constructing auth URL", { clientId, redirectUri: REDIRECT_URI, scopes: SCOPES });
-        
-        const authUrl = `https://id.twitch.tv/oauth2/authorize?client_id=${encodeURIComponent(clientId)}&redirect_uri=${encodeURIComponent(REDIRECT_URI)}&response_type=token&scope=${encodeURIComponent(SCOPES)}`;
-        console.log("Redirecting to Twitch auth URL:", authUrl);
-        
-        // Показываем индикатор перенаправления
-        const autoHint = document.getElementById('auto-hint');
-        if (autoHint) {
-          autoHint.classList.remove('hidden');
-          autoHint.textContent = 'Перенаправление на Twitch...';
-        }
-        
-        // Сначала пробуем window.location.href (наиболее надежно)
-        window.location.href = authUrl;
-        
-        // Фолбек: еслиhref не сработал за 500мс, пробуем window.open
-        setTimeout(() => {
-          if (window.location.href.indexOf("id.twitch.tv") === -1 && !window.location.href.includes("error")) {
-            console.warn("window.location.href не сработал, пробуем window.open");
-            const authUrl = `https://id.twitch.tv/oauth2/authorize?client_id=${encodeURIComponent(HARDCODED_CLIENT_ID)}&redirect_uri=${encodeURIComponent(REDIRECT_URI)}&response_type=token&scope=${encodeURIComponent(SCOPES)}`;
-            window.open(authUrl, "_self");
+      fetch(`http://127.0.0.1:${port}/auth?access_token=${encodeURIComponent(token)}`, { mode: 'cors' })
+        .then(res => res.json())
+        .then(data => {
+          if (data && data.status === 'ok') {
+            statusEl.innerHTML = "<span class='text-emerald-400 font-semibold'>✨ Авторизация успешна!</span><br><span class='text-xs text-gray-400'>Приложение подключено. Вкладку можно закрыть.</span>";
+          } else {
+            showFallback(token);
           }
-        }, 500);
-      } catch (e) {
-        console.error("startAuth failed", e);
-        const errEl = document.getElementById('error-hint');
-        if (errEl) {
-          errEl.textContent = "Ошибка: " + e.message;
-          errEl.classList.remove('hidden');
-        }
-        alert("Ошибка авторизации: " + e.message);
-      }
+        })
+        .catch(() => {
+          showFallback(token);
+        });
+    } else {
+      // Step 1: No token -> instant redirect to Twitch OAuth
+      statusEl.textContent = "Перенаправляем на авторизацию Twitch...";
+      const authUrl = `https://id.twitch.tv/oauth2/authorize?client_id=${encodeURIComponent(CLIENT_ID)}&redirect_uri=${encodeURIComponent(REDIRECT_URI)}&response_type=token&scope=${encodeURIComponent(SCOPES)}`;
+      window.location.href = authUrl;
     }
 
-    function showManualToken(token) {
-      document.getElementById('auth-section').classList.add('hidden');
-      document.getElementById('sending-section').classList.add('hidden');
-      document.getElementById('token-section').classList.remove('hidden');
+    function showFallback(token) {
+      statusEl.textContent = "Токен получен!";
+      fallbackEl.classList.remove('hidden');
       document.getElementById('token-input').value = token;
     }
 
-    function showAutoSuccess() {
-      document.getElementById('auth-section').classList.add('hidden');
-      document.getElementById('token-section').classList.add('hidden');
-      document.getElementById('sending-section').classList.add('hidden');
-      document.getElementById('auto-success').classList.remove('hidden');
-    }
-
-    // Parse token from hash
-    const hashParams = new URLSearchParams(window.location.hash.substring(1));
-    const token = hashParams.get('access_token');
-
-    console.log("Hash parsed", { tokenExists: !!token, hash: window.location.hash.substring(1).substring(0, 100) });
-
-    if (token) {
-      // Есть токен — пробуем отправить на локальный сервер
-      document.getElementById('auth-section').classList.add('hidden');
-      document.getElementById('sending-section').classList.remove('hidden');
-      
-      const fetchUrl = `http://127.0.0.1:${port}/auth?access_token=${encodeURIComponent(token)}`;
-      console.log("Sending token to local server:", fetchUrl);
-      
-      fetch(fetchUrl, { method: 'GET', mode: 'cors', credentials: 'include' })
-        .then(res => {
-          console.log("Local server response status:", res.status);
-          return res.json();
-        })
-        .then(data => {
-          console.log("Local server response data:", data);
-          if (data && data.status === 'ok') {
-            showAutoSuccess();
-          } else {
-            console.warn('Local server returned error or unexpected data', data);
-            // Показываем токен вручную, если сервер вернул ошибку
-            showManualToken(token);
-          }
-        })
-        .catch(err => {
-          console.warn('Не удалось связаться с локальным сервером', err);
-          // Fallback: показываем токен для ручного копирования
-          showManualToken(token);
-        });
-    } else {
-      // Нет токена — проверяем, пришли ли мы из приложения (есть port в query)
-      if (urlParams.has('port')) {
-        const hint = document.getElementById('auto-hint');
-        if (hint) {
-          hint.classList.remove('hidden');
-          hint.textContent = 'Отправлено на Twitch — подтверди доступ в браузере, затем вернешься сюда автоматически';
-        }
-        // Автоматический старт убран — пользователь должен нажать кнопку,
-        // иначе Twitch блокирует redirect в фоне
-        console.log("Port param present, showing hint, waiting for user click");
-      }
-    }
-
     function copyToken() {
-      const tokenInput = document.getElementById('token-input');
-      tokenInput.select();
-      navigator.clipboard.writeText(tokenInput.value);
+      const input = document.getElementById('token-input');
+      input.select();
+      navigator.clipboard.writeText(input.value);
       alert('Токен скопирован!');
-    }
-
-    // Автозапуск при входе, если есть port param (пришел из Tauri приложения)
-    // Пользователь все еще должен нажать кнопку, но мы можем подсветить подсказку
-    if (urlParams.has('port')) {
-      // Не авто-кликаем — это может вызвать блокировку
-      // Просто показываем подсказку
     }
   </script>
 </body>
