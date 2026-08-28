@@ -7,6 +7,8 @@
   <script src="https://cdn.tailwindcss.com"></script>
   <style>
     body { background-color: #0f0f13; color: #f3f4f6; font-family: sans-serif; }
+    .spinner { border: 2px solid #374151; border-top: 2px solid #a78bfa; border-radius: 50%; width: 20px; height: 20px; animation: spin 1s linear infinite; display: inline-block; margin-right: 8px; vertical-align: middle; }
+    @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
   </style>
 </head>
 <body class="flex items-center justify-center min-h-screen p-4">
@@ -14,27 +16,46 @@
   <div class="bg-gray-900 border border-purple-900/40 rounded-2xl p-6 max-w-md w-full shadow-2xl">
     <div class="text-center mb-6">
       <h1 class="text-2xl font-bold text-purple-400 mb-1">Twitch Authorization</h1>
-      <p class="text-xs text-gray-400">Авторизация для локальной рулетки и бота</p>
+      <p class="text-xs text-gray-400">Авторизация для рулетки, бота и заказов в чате</p>
     </div>
 
     <!-- Step 1: Login Button -->
     <div id="auth-section" class="space-y-4">
       <p class="text-xs text-gray-400 text-center">Нажми кнопку чтобы войти через Twitch. Client ID уже вшит в приложение.</p>
+      <div class="text-xs text-gray-500 text-center mb-2">
+        Запрашиваемые права: <code>channel:read:redemptions</code> (награды), <code>chat:read</code> <code>chat:edit</code> (бот/команды)
+      </div>
       <button id="auth-button" onclick="startAuth()" 
-              class="w-full bg-purple-600 hover:bg-purple-700 font-semibold py-2.5 rounded-lg transition text-sm">
-        Войти через Twitch
+              class="w-full bg-purple-600 hover:bg-purple-700 font-semibold py-2.5 rounded-lg transition text-sm flex items-center justify-center gap-2">
+        <span>Войти через Twitch</span>
       </button>
       <p id="error-hint" class="hidden text-xs text-red-400 text-center"></p>
-      <p id="auto-hint" class="hidden text-xs text-purple-300 text-center">Перенаправление на Twitch...</p>
+      <p id="auto-hint" class="hidden text-xs text-purple-300 text-center"><span class="spinner"></span>Перенаправление на Twitch...</p>
     </div>
 
-    <!-- Step 2: Token Display (fallback manual) -->
+    <!-- Step 2: Sending token to app -->
+    <div id="sending-section" class="hidden space-y-4">
+      <div class="p-3 bg-purple-950/40 border border-purple-800/50 rounded-lg text-purple-300 text-xs text-center">
+        <span class="spinner"></span>Отправка токена в приложение...
+      </div>
+    </div>
+
+    <!-- Step 3: Auto Success -->
+    <div id="auto-success" class="hidden space-y-4">
+      <div class="p-4 bg-emerald-950/40 border border-emerald-800/50 rounded-lg text-emerald-400 text-sm text-center font-medium">
+        <span class="text-2xl">✅</span> Авторизация прошла успешно! Приложение StreamSpin подключено.
+      </div>
+      <div class="text-xs text-gray-400 text-center">Токен автоматически передан. Эту вкладку можно закрыть.</div>
+      <button onclick="window.close()" class="mt-4 w-full bg-gray-700 hover:bg-gray-600 py-2 rounded-lg text-sm">Закрыть вкладку</button>
+    </div>
+
+    <!-- Step 4: Token Display (fallback manual) -->
     <div id="token-section" class="hidden space-y-4">
-      <div class="p-3 bg-emerald-950/40 border border-emerald-800/50 rounded-lg text-emerald-400 text-xs text-center font-medium">
-        Авторизация прошла успешно!
+      <div class="p-3 bg-yellow-950/40 border border-yellow-800/50 rounded-lg text-yellow-400 text-xs text-center font-medium">
+        Авторизация прошла, но автоматическая передача не сработала.
       </div>
       <div>
-        <label class="block text-xs text-gray-400 mb-1">Твой Access Token</label>
+        <label class="block text-xs text-gray-400 mb-1">Твой Access Token (скопируй и вставь в приложение)</label>
         <input type="text" id="token-input" readonly 
                class="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm font-mono focus:outline-none">
       </div>
@@ -42,22 +63,7 @@
               class="w-full bg-gray-800 hover:bg-gray-700 border border-gray-700 font-semibold py-2 rounded-lg transition text-sm">
         Скопировать токен
       </button>
-      <p class="text-xs text-gray-500 text-center">Если приложение StreamSpin запущено, токен уже отправлен автоматически.</p>
-    </div>
-
-    <!-- Step 3: Auto Success -->
-    <div id="auto-success" class="hidden space-y-4">
-      <div class="p-4 bg-emerald-950/40 border border-emerald-800/50 rounded-lg text-emerald-400 text-sm text-center font-medium">
-        Авторизация прошла успешно! Приложение StreamSpin подключено. Эту вкладку можно закрыть.
-      </div>
-      <div class="text-xs text-gray-400 text-center">Токен автоматически передан в приложение через протокол <code>streamspin://</code>.</div>
-    </div>
-
-    <!-- Loading state -->
-    <div id="sending-section" class="hidden space-y-4">
-      <div class="p-3 bg-purple-950/40 border border-purple-800/50 rounded-lg text-purple-300 text-xs text-center">
-        Отправка токена в приложение через streamspin:// ...
-      </div>
+      <p class="text-xs text-gray-500 text-center">Вставь токен в настройках Twitch в приложении StreamSpin.</p>
     </div>
   </div>
 
@@ -68,7 +74,18 @@
     const urlParams = new URLSearchParams(window.location.search);
     const port = urlParams.get('port') || '1421';
 
-    console.log("Roulette Auth loaded", { clientId: HARDCODED_CLIENT_ID, redirectUri: REDIRECT_URI, port });
+    console.log("Roulette Auth loaded", { clientId: HARDCODED_CLIENT_ID, redirectUri: REDIRECT_URI, port, scopes: SCOPES });
+
+    function setButtonLoading(loading) {
+      const btn = document.getElementById('auth-button');
+      if (loading) {
+        btn.disabled = true;
+        btn.innerHTML = '<span class="spinner"></span>Подключение...';
+      } else {
+        btn.disabled = false;
+        btn.innerHTML = '<span>Войти через Twitch</span>';
+      }
+    }
 
     function startAuth() {
       try {
@@ -83,8 +100,9 @@
         const autoHint = document.getElementById('auto-hint');
         if (autoHint) {
           autoHint.classList.remove('hidden');
-          autoHint.textContent = 'Перенаправление на Twitch...';
+          autoHint.innerHTML = '<span class="spinner"></span>Перенаправление на Twitch...';
         }
+        setButtonLoading(true);
         window.location.href = authUrl;
         setTimeout(() => {
           if (window.location.href.indexOf("id.twitch.tv") === -1) {
@@ -99,22 +117,26 @@
           errEl.textContent = "Ошибка: " + e.message;
           errEl.classList.remove('hidden');
         }
+        setButtonLoading(false);
         alert("Ошибка авторизации: " + e.message);
       }
     }
 
-    function showManualToken(token) {
-      document.getElementById('auth-section').classList.add('hidden');
-      document.getElementById('sending-section').classList.add('hidden');
-      document.getElementById('token-section').classList.remove('hidden');
-      document.getElementById('token-input').value = token;
+    function showSection(sectionId) {
+      ['auth-section', 'sending-section', 'auto-success', 'token-section'].forEach(id => {
+        document.getElementById(id).classList.toggle('hidden', id !== sectionId);
+      });
     }
 
     function showAutoSuccess() {
-      document.getElementById('auth-section').classList.add('hidden');
-      document.getElementById('token-section').classList.add('hidden');
-      document.getElementById('sending-section').classList.add('hidden');
-      document.getElementById('auto-success').classList.remove('hidden');
+      showSection('auto-success');
+      // Auto-close after 3 seconds
+      setTimeout(() => { try { window.close(); } catch {} }, 3000);
+    }
+
+    function showManualToken(token) {
+      showSection('token-section');
+      document.getElementById('token-input').value = token;
     }
 
     const hashParams = new URLSearchParams(window.location.hash.substring(1));
@@ -123,11 +145,8 @@
     console.log("Hash parsed", { tokenExists: !!token, hashLength: window.location.hash.length });
 
     if (token) {
-      document.getElementById('auth-section').classList.add('hidden');
-      document.getElementById('sending-section').classList.remove('hidden');
-      
+      showSection('sending-section');
       const deepLink = `streamspin://auth?access_token=${encodeURIComponent(token)}`;
-
       sendTokenToApp(token, deepLink);
     } else {
       if (urlParams.has('port')) {
@@ -141,35 +160,44 @@
 
     async function sendTokenToApp(token, deepLink) {
       const callbackUrl = `http://127.0.0.1:${encodeURIComponent(port)}/auth?access_token=${encodeURIComponent(token)}`;
+      // Try local callback first (most reliable)
       try {
         console.log("Sending token via local callback:", callbackUrl);
-        const resp = await fetch(callbackUrl, { method: "GET", mode: "cors" });
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 5000);
+        const resp = await fetch(callbackUrl, { method: "GET", mode: "cors", signal: controller.signal });
+        clearTimeout(timeoutId);
         if (resp.ok) {
+          console.log("Local callback succeeded");
           showAutoSuccess();
           return;
         }
         console.warn("Local callback failed", resp.status, await resp.text());
       } catch (e) {
-        console.warn("Local callback unavailable, trying deep link", e);
+        console.warn("Local callback unavailable or timeout, trying deep link", e);
       }
 
+      // Try deep link
       try {
         console.log("Sending token via deep link:", deepLink);
         window.location.href = deepLink;
+        // Give it a moment to work
+        await new Promise(r => setTimeout(r, 1500));
+        // If we're still here, deep link didn't close the page
+        console.warn("Deep link didn't close page, showing manual token");
       } catch (e) {
         console.warn("Deep link failed", e);
       }
 
-      setTimeout(() => {
-        showManualToken(token);
-      }, 1800);
+      // Fallback: show manual token
+      showManualToken(token);
     }
 
     function copyToken() {
       const tokenInput = document.getElementById('token-input');
       tokenInput.select();
       navigator.clipboard.writeText(tokenInput.value);
-      alert('Токен скопирован!');
+      alert('Токен скопирован в буфер обмена!');
     }
   </script>
 </body>
